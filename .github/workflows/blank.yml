@@ -1,0 +1,69 @@
+name: Inspect GitHub OIDC claims
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  inspect-oidc:
+    name: Request and decode OIDC token
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Display workflow context
+        shell: bash
+        run: |
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Repository owner: $GITHUB_REPOSITORY_OWNER"
+          echo "Workflow ref: $GITHUB_WORKFLOW_REF"
+          echo "Git ref: $GITHUB_REF"
+          echo "Event: $GITHUB_EVENT_NAME"
+      - name: Request token and display selected claims
+        shell: bash
+        env:
+          AUDIENCE: api://AzureADTokenExchange
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}")"
+          ID_TOKEN="$(printf '%s' "${RESPONSE}" | jq -r '.value')"
+          if [ -z "${ID_TOKEN}" ] || [ "${ID_TOKEN}" = "null" ]; then
+            echo "GitHub did not return an OIDC token."
+            printf '%s\n' "${RESPONSE}" | jq
+            exit 1
+          fi
+          PAYLOAD="$(printf '%s' "${ID_TOKEN}" |
+            cut -d '.' -f 2 |
+            tr '_-' '/+' |
+            awk '{
+              pad = length($0) % 4;
+              if (pad == 2) printf "%s==", $0;
+              else if (pad == 3) printf "%s=", $0;
+              else printf "%s", $0;
+            }' |
+            base64 --decode)"
+          echo "Selected OIDC claims:"
+          printf '%s\n' "${PAYLOAD}" | jq '{
+            iss,
+            aud,
+            sub,
+            enterprise,
+            enterprise_id,
+            repository,
+            repository_id,
+            repository_owner,
+            repository_owner_id,
+            repository_visibility,
+            ref,
+            ref_type,
+            environment,
+            job_workflow_ref,
+            workflow,
+            event_name,
+            actor,
+            actor_id
+          }'
